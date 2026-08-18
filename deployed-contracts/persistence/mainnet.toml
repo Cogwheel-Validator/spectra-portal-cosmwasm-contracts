@@ -1,0 +1,49 @@
+[info]
+chain_id = "core-1"
+network = "mainnet"
+deploy_date = "29/10/2024 22:07:32"
+commit_hash = "31d3886388417d7bb756fd49c0c23ad9f3370274"
+salt = "2"
+
+[checksums]
+"skip_api_entry_point-aarch64.wasm" = "0f03ab75e66b33b27285e83897d534070b73fd89287569db99b4c40c1af24f61"
+"skip_api_ibc_adapter_ibc_hooks-aarch64.wasm" = "cd76939e60d7ff36647cfba24cb5b3dad3aa22ace7423f7ee08286dbe0e01e4b"
+"skip_api_ibc_adapter_neutron_transfer-aarch64.wasm" = "536aeca3ad484aeabaa2bc9fe12cf921394d7b3028f652bcc4ddfed1a446a2cc"
+"skip_api_placeholder-aarch64.wasm" = "41d68796f6d266e86b0013496774065ac1bcefb31d71ba535c1276235cd105f1"
+"skip_api_swap_adapter_astroport-aarch64.wasm" = "10095c4d38c47412c125a83a4755ff31461262afac04a2f38911a2f6bfa21d1c"
+"skip_api_swap_adapter_dexter-aarch64.wasm" = "aa121df44fba4adc92d2b1d06f3ac84d549fc34f1ff58e7a8d4e901d358faf42"
+"skip_api_swap_adapter_hallswap-aarch64.wasm" = "49361b771f199ac80fadf9e205969814f14e60160125ba50bebeef2f8021c54e"
+"skip_api_swap_adapter_lido_satellite-aarch64.wasm" = "d18fc2187908c0538c616b291a64852d3a9e96667c1044f40d52ee766505efb4"
+"skip_api_swap_adapter_osmosis_poolmanager-aarch64.wasm" = "aaaa6f1693338b8ad9c971463f4fe9d784cd16908f74aa09c04a499797f91c43"
+"skip_api_swap_adapter_white_whale-aarch64.wasm" = "46da262862d471f89c94d46bc231335bf9fffd82b468a792e19935438ad22b26"
+"skip_go_entry_point-aarch64.wasm" = "ad769c800f304595d8d5009c88315210d056c6b03beb3e86ab64c216c3ae01e1"
+"skip_go_ibc_adapter_ibc_hooks-aarch64.wasm" = "691098edddef51c0ae210f8a0fa198c2e9a53704cb7ef373b24e5fe7038874f6"
+"skip_go_ibc_adapter_neutron_transfer-aarch64.wasm" = "28dcc6db06bf21f12997688e6b3fbedffd093286669e3b75877b7a1f9734e484"
+"skip_go_placeholder-aarch64.wasm" = "9f1885683e45b08f3b2ce7a92716cd99f324ac211ed26c6c8b0c3422ce3bb504"
+"skip_go_swap_adapter_astroport-aarch64.wasm" = "85d5f92a7a06a72efe88608cc9cae1fc045d738eb49b8655a8c71b47e687d43f"
+"skip_go_swap_adapter_dexter-aarch64.wasm" = "50a59433db5eece6490e6c574c2d4bdda0e4cbeb5ea60f4c84876325b480b9c5"
+"skip_go_swap_adapter_drop-aarch64.wasm" = "12bc54194338dd8eb72eb6f19b43c1d3d94204264df2a3bc4026d7941b947883"
+"skip_go_swap_adapter_duality-aarch64.wasm" = "f4e3895d9e5b27c4515f88550d40946e8d403572609d507fb291af00caa735da"
+"skip_go_swap_adapter_hallswap-aarch64.wasm" = "d88911659910dfb32fd6d999f69645d43032d1cde6dfb5aa7c9edccf69d445de"
+"skip_go_swap_adapter_lido_satellite-aarch64.wasm" = "fc028e4d6e43491c2a0dcfabb7f2f5c3a2016659936dfa96f522bbbdf7d5305f"
+"skip_go_swap_adapter_osmosis_poolmanager-aarch64.wasm" = "df3a4d8e4cd62fb7b293ac3f47cedf7a28308584ec64954400584624f3551960"
+"skip_go_swap_adapter_pryzm-aarch64.wasm" = "9486973c17242766527bd57dff344377f85a16da67cfd116dbc82b749c0d55d0"
+"skip_go_swap_adapter_white_whale-aarch64.wasm" = "c26a7e66311a1a4dbfdb9f06a51e85817aec72100a1ec72aef9a0b56c15a10f1"
+
+[code-ids]
+ibc_transfer_adapter_contract_code_id = "34"
+swap_adapter_persistence-dexter_contract_code_id = "35"
+entry_point_contract_code_id = "36"
+
+[contract-addresses]
+ibc_transfer_adapter_contract_address = "persistence1wrkyxm3u6qz7n7mnws5235kqeuq6u0httlpl7x8cf93e3r0w96psw6ttw4"
+swap_adapter_persistence-dexter_contract_address = "persistence1s2lr8u69xammmg3s8hemegcz57y07ae0wa7c7d2adupp6du3neyqtnvyfg"
+entry_point_contract_address = "persistence18x2ae7yhd3ggvw4ryp5fjtxz5e0z3ml6srnv3ssqxedvlaqvecyq9pwq2s"
+
+[tx-hashes]
+store_ibc_transfer_adapter_tx_hash = "8ffa60860136f95d93202887284ea8f9d3276dd20a97651068b616f915b1ca6b"
+instantiate_ibc_transfer_adapter_tx_hash = "7ca39baaa78dae683b1ed478c0b48ab7bfaedf74c29b6c10980cb35f459bee5e"
+store_swap_adapter_persistence-dexter_tx_hash = "0bba8b6569074b1976954300d0912f1d192f625186c1f7c92484ffafc0b01a59"
+instantiate_swap_adapter_persistence-dexter_tx_hash = "21b8d3bf656ce67665bf7d5dba37d64eac844c87388356de39cf61be63089783"
+store_entry_point_tx_hash = "e7f6ac13608cb7a78e179c6e46a7b9a040a0429e3768ff6d1178ed8c4f6fa2ab"
+instantiate_entry_point_tx_hash = "a8db2e478a141cca92a7823edf91f0e31a1b42d0dba77ab0d1f6978f66b966c2"

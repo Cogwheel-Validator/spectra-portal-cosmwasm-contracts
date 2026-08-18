@@ -1,0 +1,41 @@
+# Enter your mnemonic here
+MNEMONIC = "<YOUR MNEMONIC HERE>"
+
+# Commit Hash of the commit used to build the contracts
+COMMIT_HASH = "<COMMIT HASH HERE>"
+
+MAINNET_REST_URL = "https://migaloo-api.polkachu.com" 
+MAINNET_RPC_URL = "https://migaloo-rpc.polkachu.com"
+MAINNET_CHAIN_ID = "migaloo-1"
+
+# Currently No Testnet Support For This Swap Chain
+# TESTNET_REST_URL = "https://migaloo-testnet-api.polkachu.com"
+# TESTNET_RPC_URL = "https://migaloo-testnet-rpc.polkachu.com"
+# TESTNET_CHAIN_ID = "narwhal-2"
+
+ADDRESS_PREFIX = "migaloo"
+DENOM = "uwhale"
+GAS_PRICE = 1
+
+# Contract Paths
+ENTRY_POINT_CONTRACT_PATH = "../artifacts/skip_go_entry_point-aarch64.wasm"
+IBC_TRANSFER_ADAPTER_PATH = "../artifacts/skip_go_ibc_adapter_ibc_hooks-aarch64.wasm"
+
+# SALT USED TO GENERATE A DETERMINSTIC ADDRESS
+SALT = "1"
+
+# @DEV MUST CHANGE SALT ACCORDINGLY TO OBTAIN THIS PRE GENERATED ADDRESS
+ENTRY_POINT_PRE_GENERATED_ADDRESS = "<PRE GENERATED ADDRESS HERE>"
+
+[[swap_venues]]
+name = "migaloo-white-whale"
+swap_adapter_path = "../artifacts/skip_go_swap_adapter_white_whale-aarch64.wasm"
+
+[[swap_venues]]
+name = "migaloo-hallswap"
+hallswap_contract_address = "migaloo10l2nactp2af8uw3xupgmmpsng85fngguk5jj0qy57vc3lfllan9sarp6hf"
+swap_adapter_path = "../artifacts/skip_go_swap_adapter_hallswap-aarch64.wasm"
+
+# [[testnet_swap_venues]]
+# name = "testnet-migaloo-white-whale"
+# swap_adapter_path = "../artifacts/skip_go_swap_adapter_white_whale-aarch64.wasm"
