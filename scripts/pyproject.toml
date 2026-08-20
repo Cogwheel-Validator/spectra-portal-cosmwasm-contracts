@@ -14,3 +14,15 @@ dependencies = [
 override-dependencies = [
     "coincurve>=21.0.0"
 ]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.10",
+    "ruff>=0.16.3",
+]
+
+[tool.pyright]
+exclude=[
+    "typings/*",
+]
+pythonPlatform = "Linux"

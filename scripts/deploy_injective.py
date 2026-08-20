@@ -1,19 +1,18 @@
 import asyncio
 import json
-import sys
-import tomlkit
 import os
+import sys
 import time
 from datetime import datetime
 
+import tomlkit
 from grpc import RpcError
-
 from pyinjective.async_client import AsyncClient
 from pyinjective.constant import GAS_FEE_BUFFER_AMOUNT, GAS_PRICE
 from pyinjective.core.network import Network
+from pyinjective.proto.cosmwasm.wasm.v1 import tx_pb2 as wasm_tx_pb
 from pyinjective.transaction import Transaction
 from pyinjective.wallet import PrivateKey
-from pyinjective.proto.cosmwasm.wasm.v1 import tx_pb2 as wasm_tx_pb
 
 CHAIN = sys.argv[1]
 NETWORK = sys.argv[2]
@@ -31,9 +30,7 @@ for file in os.listdir("configs"):
 
 # Raise exception if config not found
 if not found_config:
-    raise Exception(
-        f"Could not find config for chain {CHAIN}; Must enter a chain as 1st cli arg."
-    )
+    raise Exception(f"Could not find config for chain {CHAIN}; Must enter a chain as 1st cli arg.")
 
 # Create deployed-contracts folder if it doesn't exist
 if not os.path.exists("../deployed-contracts"):
@@ -70,6 +67,7 @@ IBC_TRANSFER_CODE_ID = config["IBC_TRANSFER_CODE_ID"]
 
 DEPLOYED_CONTRACTS_INFO = {}
 
+
 async def main() -> None:
     # Initialize deployed contracts info
     init_deployed_contracts_info()
@@ -80,7 +78,7 @@ async def main() -> None:
 
     # Store checksums for deployed contracts info
     for i in range(0, len(checksums), 2):
-        DEPLOYED_CONTRACTS_INFO["checksums"][checksums[i+1]] = checksums[i]
+        DEPLOYED_CONTRACTS_INFO["checksums"][checksums[i + 1]] = checksums[i]
         with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
             tomlkit.dump(DEPLOYED_CONTRACTS_INFO, f)
 
@@ -106,7 +104,7 @@ async def main() -> None:
         code_id=IBC_TRANSFER_CODE_ID,
         args={"entry_point_contract_address": ENTRY_POINT_PRE_GENERATED_ADDRESS},
         label="Skip Swap IBC Transfer Adapter",
-        name="ibc_transfer_adapter"
+        name="ibc_transfer_adapter",
     )
 
     entry_point_instantiate_args = {
@@ -127,7 +125,7 @@ async def main() -> None:
             code_id=venue["code_id"],
             args=args,
             label=f"Skip Swap Swap Adapter {venue['name']}",
-            name=f"swap_adapter_{venue['name']}"
+            name=f"swap_adapter_{venue['name']}",
         )
         entry_point_instantiate_args["swap_venues"].append(
             {
@@ -145,8 +143,9 @@ async def main() -> None:
         code_id=ENTRY_POINT_CODE_ID,
         args=entry_point_instantiate_args,
         label="Skip Swap Entry Point",
-        name="entry_point"
+        name="entry_point",
     )
+
 
 async def instantiate_contract(
     client,
@@ -163,7 +162,7 @@ async def instantiate_contract(
         sender=address.to_acc_bech32(),
         code_id=code_id,
         label=label,
-        msg=json.dumps(args).encode('utf-8'),
+        msg=json.dumps(args).encode("utf-8"),
     )
     return await broadcast_tx(
         msg,
@@ -191,7 +190,7 @@ async def instantiate2_contract(
         sender=address.to_acc_bech32(),
         code_id=code_id,
         label=label,
-        msg=json.dumps(args).encode('utf-8'),
+        msg=json.dumps(args).encode("utf-8"),
         salt=SALT,
         fix_msg=False,
     )
@@ -238,15 +237,22 @@ async def broadcast_tx(
 
     # build tx
     gas_price = GAS_PRICE
-    gas_limit = int(sim_res["gasInfo"]["gasUsed"]) + GAS_FEE_BUFFER_AMOUNT + 100_000  # add buffer for gas fee computation
-    gas_fee = "{:.18f}".format((gas_price * gas_limit) / pow(10, 18)).rstrip("0")
+    gas_limit = (
+        int(sim_res["gasInfo"]["gasUsed"]) + GAS_FEE_BUFFER_AMOUNT + 100_000
+    )  # add buffer for gas fee computation
+    gas_fee = f"{(gas_price * gas_limit) / pow(10, 18):.18f}".rstrip("0")
     fee = [
         composer.Coin(
             amount=gas_price * gas_limit,
             denom=network.fee_denom,
         )
     ]
-    tx = tx.with_gas(gas_limit).with_fee(fee).with_memo("").with_timeout_height(client.timeout_height)
+    tx = (
+        tx.with_gas(gas_limit)
+        .with_fee(fee)
+        .with_memo("")
+        .with_timeout_height(client.timeout_height)
+    )
     sign_doc = tx.get_sign_doc(pub_key)
     sig = priv_key.sign(sign_doc.SerializeToString())
     tx_raw_bytes = tx.get_tx_data(sig, pub_key)
@@ -261,13 +267,13 @@ async def broadcast_tx(
     # broadcast tx: send_tx_async_mode, send_tx_sync_mode, send_tx_block_mode
     res = await client.broadcast_tx_sync_mode(tx_raw_bytes)
     print(res)
-    print("gas wanted: {}".format(gas_limit))
-    print("gas fee: {} INJ".format(gas_fee))
+    print(f"gas wanted: {gas_limit}")
+    print(f"gas fee: {gas_fee} INJ")
 
     print("Sleeping for 10 seconds...")
     time.sleep(10)
 
-    tx_hash = res['txResponse']['txhash']
+    tx_hash = res["txResponse"]["txhash"]
     print("tx hash: ", tx_hash)
     tx_logs = await client.fetch_tx(hash=tx_hash)
     print(tx_logs)
@@ -284,11 +290,11 @@ async def broadcast_tx(
 
 
 def get_contract_address(tx_logs):
-    for event in tx_logs['txResponse']['events']:
-        if event['type'] == "instantiate":
-            for attr in event['attributes']:
-                if attr['key'] == "_contract_address":
-                    return attr['value']
+    for event in tx_logs["txResponse"]["events"]:
+        if event["type"] == "instantiate":
+            for attr in event["attributes"]:
+                if attr["key"] == "_contract_address":
+                    return attr["value"]
     return None
 
 
