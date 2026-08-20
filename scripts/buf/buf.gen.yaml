@@ -1,0 +1,17 @@
+version: v2
+plugins:
+  - remote: buf.build/protocolbuffers/python
+    out: ../proto_gen
+
+  - remote: buf.build/community/nipunn1313-mypy
+    out: ../proto_gen
+
+inputs:
+  - git_repo: https://github.com/CosmWasm/wasmd.git
+    branch: main
+    subdir: proto
+  - git_repo: https://github.com/cosmos/cosmos-sdk
+    branch: main
+    subdir: proto
+    paths:
+      - cosmos/authz

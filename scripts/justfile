@@ -1,0 +1,2 @@
+generate_proto:
+    cd ./buf && buf generate
