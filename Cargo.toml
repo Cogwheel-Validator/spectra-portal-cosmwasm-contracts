@@ -2,7 +2,6 @@
 resolver = "2"
 members  = [
   "contracts/entry-point",
-  "contracts/adapters/hyperlane",
   "contracts/adapters/ibc/*",
   "contracts/adapters/swap/*",
   "contracts/placeholder",
@@ -38,7 +37,6 @@ cw20                 = "1.1"
 cw-storage-plus      = "1"
 cw-utils             = "1.0.3"
 cw-multi-test        = "0.20.0"
-hpl-interface        = { git = "https://github.com/many-things/cw-hyperlane.git", branch = "main", features = ["library"] }
 ibc-proto            = { version = "0.32.1", default-features = false }
 lido-satellite       = { git = "https://github.com/hadronlabs-org/lido-satellite", branch = "main", features = ["library"] }
 drop-factory         = { git = "https://github.com/hadronlabs-org/drop-contracts.git", rev = "899ec67", features = ["library"] }
