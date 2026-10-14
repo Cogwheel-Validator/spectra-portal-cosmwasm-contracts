@@ -495,220 +495,121 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
     .map_err(From::from)
 }
 
-// Scratch Tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::{IbcEndpoint, IbcTimeout, Timestamp};
+    use serde_json_wasm::from_slice;
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use alloy_sol_types::SolType;
-//     use cosmwasm_std::{from_base64, from_json, IbcTimeout, StdAck, SubMsgResponse, Timestamp};
-//     use ibc_eureka_solidity_types::msgs::IICS20TransferMsgs::FungibleTokenPacketData as AbiFungibleTokenPacketData;
-//     use serde_json_wasm::from_slice;
+    // This might be needed for Injective?
+    #[test]
+    fn test_evm_address_validation() {
+        let good = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
+        let bad = "0x123INVALIDADDRESS";
+        assert!(is_valid_ethereum_address(good));
+        assert!(!is_valid_ethereum_address(bad));
+    }
 
-//     use ibc_proto::ibc::applications::transfer::v1::FungibleTokenPacketData;
+    #[test]
+    fn test_get_recv_denom_new_denom() {
+        let ibc_packet = IbcPacket::new(
+            Binary::default(),
+            IbcEndpoint {
+                port_id: "transfer".to_string(),
+                channel_id: "client-6".to_string(),
+            },
+            IbcEndpoint {
+                port_id: "transfer".to_string(),
+                channel_id: "08-wasm-0".to_string(),
+            },
+            1,
+            IbcTimeout::with_timestamp(Timestamp::from_nanos(1)),
+        );
 
-//     use cosmwasm_std::IbcEndpoint;
+        let recv_denom = get_recv_denom(
+            ibc_packet,
+            "0xc30edcad074f093882d80424962415cf61494258".to_string(),
+        );
+        assert_eq!(
+            recv_denom,
+            "ibc/68AFE084B6ADF1E1DF3867675072F23BF12F270033BD4CE65A10DD7D05D411E1".to_string()
+        );
+    }
 
-//     #[test]
-//     fn test_evm_address_validation() {
-//         let good = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
-//         let bad = "0x123INVALIDADDRESS";
+    #[test]
+    fn test_get_recv_denom_returning_base_denom() {
+        let ibc_packet = IbcPacket::new(
+            Binary::default(),
+            IbcEndpoint {
+                port_id: "transfer".to_string(),
+                channel_id: "client-6".to_string(),
+            },
+            IbcEndpoint {
+                port_id: "transfer".to_string(),
+                channel_id: "08-wasm-0".to_string(),
+            },
+            1,
+            IbcTimeout::with_timestamp(Timestamp::from_nanos(1)),
+        );
 
-//         assert!(is_valid_ethereum_address(good));
-//         assert!(!is_valid_ethereum_address(bad));
+        // A denom returning to origin over the source channel should unwind to its base denom.
+        let recv_denom = get_recv_denom(ibc_packet, "transfer/client-6/stake".to_string());
+        assert_eq!(recv_denom, "stake".to_string());
+    }
 
-//     }
+    #[test]
+    fn test_get_recv_denom_returning_multihop_denom() {
+        let ibc_packet = IbcPacket::new(
+            Binary::default(),
+            IbcEndpoint {
+                port_id: "transfer".to_string(),
+                channel_id: "hub-testnet-sp1-4".to_string(),
+            },
+            IbcEndpoint {
+                port_id: "transfer".to_string(),
+                channel_id: "08-wasm-0".to_string(),
+            },
+            1,
+            IbcTimeout::with_timestamp(Timestamp::from_nanos(1)),
+        );
 
-//     #[test]
-//     fn test_reply() {
-//         let sub_msg_result = SubMsgResult::Ok(SubMsgResponse {
-//             events: vec![],
-//             data: Some(Binary::new(b"11".to_vec())),
-//             msg_responses: vec![],
-//         });
-//         let reply = Reply {
-//             id: 1,
-//             payload: Binary::default(),
-//             gas_used: 0,
-//             result: sub_msg_result,
-//         };
-//         println!("{:#?}", reply);
-//         //let resp: MsgTransferResponse = MsgTransferResponse::decode(Binary::new(b"0803".to_vec()).as_slice()).unwrap();
-//         let resp: MsgTransferResponse =
-//             MsgTransferResponse::decode(Binary::from(vec![0x08, 0x03]).as_slice()).unwrap();
-//         println!("{:#?}", resp);
-//     }
+        let recv_denom = get_recv_denom(
+            ibc_packet,
+            "transfer/hub-testnet-sp1-4/transfer/channel-347/ubbn".to_string(),
+        );
+        assert_eq!(
+            recv_denom,
+            "ibc/66D14DD6F6E1170CC4E17FB3FF485F83F6E2DC01DC4AB88399AD956920847EFF".to_string()
+        );
+    }
 
-//     #[test]
-//     fn test_get_recv_denom_new_denom() {
-//         let timeout = IbcTimeout::with_timestamp(Timestamp::from_nanos(1));
-//         let ibc_packet = IbcPacket::new(
-//             Binary::default(),
-//             IbcEndpoint {
-//                 port_id: "transfer".to_string(),
-//                 channel_id: "client-6".to_string(),
-//             },
-//             IbcEndpoint {
-//                 port_id: "transfer".to_string(),
-//                 channel_id: "08-wasm-0".to_string(),
-//             },
-//             1,
-//             timeout,
-//         );
+    #[test]
+    fn test_valid_memo_decodes_contract_and_msg() {
+        let memo = r#"
+        {
+            "wasm": {
+                "contract": "some_contract_address",
+                "msg": {
+                    "some_key": "some_value",
+                    "another_key": 123
+                }
+            }
+        }
+        "#;
 
-//         let packet_denom = "0xc30edcad074f093882d80424962415cf61494258".to_string();
-//         let recv_denom = get_recv_denom(ibc_packet, packet_denom);
-//         assert_eq!(
-//             recv_denom,
-//             "ibc/68AFE084B6ADF1E1DF3867675072F23BF12F270033BD4CE65A10DD7D05D411E1".to_string()
-//         );
-//     }
+        let (contract_addr, msg_bin) =
+            get_contract_addr_and_msg_from_ibc_hooks_memo(memo.to_string()).unwrap();
+        assert_eq!(contract_addr, "some_contract_address");
 
-//     #[test]
-//     fn test_get_recv_denom_returning_denom() {
-//         let timeout = IbcTimeout::with_timestamp(Timestamp::from_nanos(1));
-//         let ibc_packet = IbcPacket::new(
-//             Binary::default(),
-//             IbcEndpoint {
-//                 port_id: "transfer".to_string(),
-//                 channel_id: "client-6".to_string(),
-//             },
-//             IbcEndpoint {
-//                 port_id: "transfer".to_string(),
-//                 channel_id: "08-wasm-0".to_string(),
-//             },
-//             1,
-//             timeout,
-//         );
+        let msg_val: Value = from_slice(&msg_bin).unwrap();
+        let expected_msg: Value =
+            serde_json_wasm::from_str(r#"{ "some_key":"some_value", "another_key":123 }"#).unwrap();
+        assert_eq!(msg_val, expected_msg);
+    }
 
-//         let packet_denom = "transfer/client-6/stake".to_string();
-//         let recv_denom = get_recv_denom(ibc_packet, packet_denom);
-//         assert_eq!(recv_denom, "stake".to_string());
-//     }
-
-//     #[test]
-//     fn test_get_recv_denom_returning_multihop_denom() {
-//         let timeout = IbcTimeout::with_timestamp(Timestamp::from_nanos(1));
-//         let ibc_packet = IbcPacket::new(
-//             Binary::default(),
-//             IbcEndpoint {
-//                 port_id: "transfer".to_string(),
-//                 channel_id: "hub-testnet-sp1-4".to_string(),
-//             },
-//             IbcEndpoint {
-//                 port_id: "transfer".to_string(),
-//                 channel_id: "08-wasm-0".to_string(),
-//             },
-//             1,
-//             timeout,
-//         );
-
-//         let packet_denom = "transfer/hub-testnet-sp1-4/transfer/channel-347/ubbn".to_string();
-//         let recv_denom = get_recv_denom(ibc_packet, packet_denom);
-//         assert_eq!(recv_denom, "ibc/66D14DD6F6E1170CC4E17FB3FF485F83F6E2DC01DC4AB88399AD956920847EFF".to_string());
-//     }
-
-//     #[test]
-//     fn test_get_fungible_token_packet_data() {
-//         let msg_packet_data_str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoweGMzMGVkY2FkMDc0ZjA5Mzg4MmQ4MDQyNDk2MjQxNWNmNjE0OTQyNTgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoweDk1MjQ0ZjkwZTExMDQ3YTBkYzA3MjhmMjBjZWZhYzI5ZTZjYTFlYTMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEFjb3Ntb3MxZ2hkNzUzc2hqdXdleHh5d21nczR4ejd4MnE3MzJ2Y25rbTZoMnB5djlzNmFoM2h5bHZycWEwZHI1cQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYnsiZGVzdF9jYWxsYmFjayI6IHsiYWRkcmVzcyI6ImNvc21vczFnaGQ3NTNzaGp1d2V4eHl3bWdzNHh6N3gycTczMnZjbmttNmgycHl2OXM2YWgzaHlsdnJxYTBkcjVxIn19AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-//         let msg_packet_data: Binary = from_base64(msg_packet_data_str).unwrap().into();
-
-//         let packet_data = get_fungible_token_packet_data(msg_packet_data).unwrap();
-//         println!("{:#?}", packet_data);
-//     }
-
-//     #[test]
-//     fn test_msg_packet_data() {
-//         let msg_packet_data_str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoweGMzMGVkY2FkMDc0ZjA5Mzg4MmQ4MDQyNDk2MjQxNWNmNjE0OTQyNTgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoweDk1MjQ0ZjkwZTExMDQ3YTBkYzA3MjhmMjBjZWZhYzI5ZTZjYTFlYTMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEFjb3Ntb3MxZ2hkNzUzc2hqdXdleHh5d21nczR4ejd4MnE3MzJ2Y25rbTZoMnB5djlzNmFoM2h5bHZycWEwZHI1cQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYnsiZGVzdF9jYWxsYmFjayI6IHsiYWRkcmVzcyI6ImNvc21vczFnaGQ3NTNzaGp1d2V4eHl3bWdzNHh6N3gycTczMnZjbmttNmgycHl2OXM2YWgzaHlsdnJxYTBkcjVxIn19AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-//         let msg_packet_data: Binary = from_base64(msg_packet_data_str).unwrap().into();
-//         // //let packet_data_proto: FungibleTokenPacketData = FungibleTokenPacketData::decode(&*msg_packet_data).unwrap();
-//         // // Try to parse the packet data as a JSON encoded FungibleTokenPacketData
-//         if let Ok(ftpd) = from_json::<FungibleTokenPacketData>(&msg_packet_data) {
-//             println!("Parsed entire thing as JSON!\n{:#?}", ftpd);
-//         }
-
-//         // Try to parse the packet data as an ABI encoded FungibleTokenPacketData
-//         if let Ok(ftpd) = AbiFungibleTokenPacketData::abi_decode(&msg_packet_data, true) {
-//             println!("Parsed entire thing as ABI!");
-//             // Print Denom
-//             println!("Denom: {}", ftpd.denom);
-//             // Print Amount
-//             println!("Amount: {}", ftpd.amount);
-//             // Print Sender
-//             println!("Sender: {}", ftpd.sender);
-//             // Print Receiver
-//             println!("Receiver: {}", ftpd.receiver);
-//             // Print Memo
-//             println!("Memo: {}", ftpd.memo);
-//         }
-//     }
-
-//     #[test]
-//     fn test_valid_memo() {
-//         // A valid JSON structure containing the fields "wasm" -> { "contract", "msg" }
-//         let memo = r#"
-//         {
-//             "wasm": {
-//                 "contract": "some_contract_address",
-//                 "msg": {
-//                     "some_key": "some_value",
-//                     "another_key": 123
-//                 }
-//             }
-//         }
-//         "#;
-
-//         let result = get_contract_addr_and_msg_from_ibc_hooks_memo(memo.to_string());
-//         assert!(result.is_ok());
-
-//         let (contract_addr, msg_bin) = result.unwrap();
-//         assert_eq!(contract_addr, "some_contract_address");
-
-//         // If we want to check the contents of the msg, we can parse the Binary back to JSON.
-//         let msg_val: Value = from_slice(&msg_bin).unwrap();
-//         // e.g. ensure we got the same structure back
-//         let expected_msg =
-//             serde_json_wasm::from_str(r#"{ "some_key":"some_value", "another_key":123 }"#).unwrap();
-//         assert_eq!(msg_val, expected_msg);
-//     }
-
-//     #[test]
-//     fn test_valid_ack_data() {
-//         let ack_data = StdAck::success(b"\x01").to_binary();
-//         println!("{:?}", ack_data);
-//         assert_eq!(ack_data, br#"{"result":"AQ=="}"#);
-//         println!("{}", ack_data.to_string());
-
-//         let success_result_ack: Binary = br#"{"result":"AQ=="}"#.into();
-//         println!("{:?}", success_result_ack);
-//         println!("{}", success_result_ack.to_string());
-//         let b64_data = success_result_ack.to_base64();
-//         println!("{}", b64_data);
-
-//         let b64_data_on_chain = "ChF7InJlc3VsdCI6IkFRPT0ifQ==";
-//         let ack_binary = from_base64(b64_data_on_chain).unwrap();
-//         println!("{:?}", ack_binary);
-//         let ack_str_utf8 = String::from_utf8_lossy(&ack_binary);
-//         println!("ack_str_utf8:{}", ack_str_utf8);
-
-//         if !ack_str_utf8.contains("{\"result\":\"AQ==\"}") {
-//             panic!("Not a success ack");
-//         }
-
-//         let other_b64_data_on_chain = "eyJyZXN1bHQiOiJBUT09In0";
-//         let other_ack_binary = from_base64(other_b64_data_on_chain).unwrap();
-//         println!("{:?}", other_ack_binary);
-//         let other_ack_str_utf8 = String::from_utf8_lossy(&other_ack_binary);
-//         println!("other_ack_str_utf8:{}", other_ack_str_utf8);
-//         if !other_ack_str_utf8.contains("{\"result\":\"AQ==\"}") {
-//             panic!("Not a success ack");
-//         }
-
-//         let other_ack_json: Value = from_json(&other_ack_binary).unwrap();
-//         println!("other_ack_binary converted to json: {:?}", other_ack_json);
-
-//         // Take ack_binary and convert to json
-//         let ack_json: Value = from_json(&ack_binary).unwrap();
-//         println!("ack_binary converted to json: {:?}", ack_json);
-//     }
-// }
+    #[test]
+    fn test_invalid_memo_errors() {
+        // Not valid JSON at all. Should error.
+        assert!(get_contract_addr_and_msg_from_ibc_hooks_memo("not json".to_string()).is_err());
+    }
+}
