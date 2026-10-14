@@ -1,5 +1,4 @@
 exclude=[
-    "proto_gen",
     ".ruff_cache",
     ".venv",
     "typings"
