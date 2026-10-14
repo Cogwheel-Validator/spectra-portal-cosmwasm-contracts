@@ -1,0 +1,32 @@
+[project]
+name = "scripts"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "cosmpy>=0.12.2",
+    "httpx[http2]>=0.28.1",
+    "injective-py>=1.16.0",
+    "tomlkit>=0.15.1",
+]
+
+[tool.uv]
+override-dependencies = [
+    "coincurve>=21.0.0"
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.10",
+    "ruff>=0.16.3",
+]
+
+[tool.pyright]
+include = ["deploy.py", "deploy_injective.py"]
+exclude = [
+    "**/__pycache__",
+    "**/.*",
+    "typings",
+]
+pythonPlatform = "Linux"
+# pyinjective ships inline annotations but no stub files
+reportMissingTypeStubs = false

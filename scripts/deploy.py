@@ -1,91 +1,119 @@
-import os
+import json
 import sys
-import toml
-import httpx
 import time
-from hashlib import sha256
+import tomllib
 from base64 import b64encode
-from datetime import datetime
-from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins
-from google.protobuf import any_pb2
+from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
+from typing import NotRequired, TypedDict, cast
 
-from cosmpy.aerial.client import LedgerClient, NetworkConfig
-from cosmpy.aerial.tx import Transaction, SigningCfg
+import httpx
+import tomlkit
+from cosmpy.aerial.client import LedgerClient
+from cosmpy.aerial.config import NetworkConfig
+from cosmpy.aerial.tx import SigningCfg, Transaction, TxFee
 from cosmpy.aerial.wallet import LocalWallet
-from cosmpy.crypto.keypairs import PrivateKey
-from cosmpy.protos.cosmwasm.wasm.v1.tx_pb2 import (
-    MsgStoreCode, 
-    MsgInstantiateContract, 
-    MsgInstantiateContract2,
-    MsgMigrateContract,
-    MsgClearAdmin,
-    )
-from cosmpy.common.utils import json_encode
 from cosmpy.protos.cosmos.authz.v1beta1.tx_pb2 import MsgExec
+from cosmpy.protos.cosmwasm.wasm.v1.tx_pb2 import (
+    MsgInstantiateContract,
+    MsgInstantiateContract2,
+    MsgStoreCode,
+)
+from google.protobuf.any_pb2 import Any as ProtoAny
+from google.protobuf.message import Message
+
+
+class SwapVenue(TypedDict):
+    name: str
+    swap_adapter_path: str
+
+
+class Config(TypedDict):
+    MNEMONIC: str
+    COMMIT_HASH: str
+    MAINNET_REST_URL: str
+    MAINNET_RPC_URL: str
+    MAINNET_CHAIN_ID: str
+    TESTNET_REST_URL: str
+    TESTNET_RPC_URL: str
+    TESTNET_CHAIN_ID: str
+    ADDRESS_PREFIX: str
+    DENOM: str
+    GAS_PRICE: float
+    ENTRY_POINT_CONTRACT_PATH: str
+    IBC_TRANSFER_ADAPTER_PATH: str
+    SALT: str
+    ENTRY_POINT_PRE_GENERATED_ADDRESS: str
+    PERMISSIONED_UPLOADER_ADDRESS: NotRequired[str]
+    swap_venues: NotRequired[list[SwapVenue]]
+    testnet_swap_venues: NotRequired[list[SwapVenue]]
+
+
+class EventAttribute(TypedDict):
+    key: str
+    value: str
+
+
+class Event(TypedDict):
+    type: str
+    attributes: list[EventAttribute]
+
+
+class TxLog(TypedDict):
+    events: list[Event]
+
+
+class TxResponse(TypedDict):
+    logs: NotRequired[list[TxLog]]
+    events: list[Event]
+
+
+class GetTxResponse(TypedDict):
+    tx_response: TxResponse
+
+
+class DeployError(Exception):
+    pass
+
+
+if len(sys.argv) != 3:
+    sys.exit("Usage: python deploy.py osmosis <mainnet|testnet>")
 
 CHAIN = sys.argv[1]
 NETWORK = sys.argv[2]
-DEPLOYED_CONTRACTS_FOLDER_PATH = "../deployed-contracts"
 
 if CHAIN == "injective":
-    raise Exception(
-        "Injective is not supported in deploy.py. Use deploy_injective.py instead."
-    )
+    sys.exit("Injective is not supported in deploy.py. Use deploy_injective.py instead.")
+if CHAIN != "osmosis":
+    sys.exit(f"Unsupported chain {CHAIN}; deploy.py only supports osmosis.")
+if NETWORK not in ("mainnet", "testnet"):
+    sys.exit("Must specify either 'mainnet' or 'testnet' for 2nd cli arg.")
 
-# Match the CHAIN to the file name in the configs folder
-found_config = False
-for file in os.listdir("configs"):
-    if file == f"{CHAIN}.toml":
-        config = toml.load(f"configs/{file}")
-        found_config = True
-        break
+with Path(f"configs/{CHAIN}.toml").open("rb") as config_file:
+    # tomllib returns an untyped dict; the TypedDict documents the expected config shape
+    config = cast(Config, cast(object, tomllib.load(config_file)))
 
-# Raise exception if config not found
-if not found_config:
-    raise Exception(
-        f"Could not find config for chain {CHAIN}; Must enter a chain as 1st cli arg."
-    )
+DEPLOYED_CONTRACTS_PATH = Path("../deployed-contracts") / CHAIN / f"{NETWORK}.toml"
+DEPLOYED_CONTRACTS_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Create deployed-contracts folder if it doesn't exist
-if not os.path.exists("../deployed-contracts"):
-   os.makedirs("../deployed-contracts")
-   
-# Create chain folder if it doesn't exist within deployed-contracts
-if not os.path.exists(f"../deployed-contracts/{CHAIN}"):
-    os.makedirs(f"../deployed-contracts/{CHAIN}")
-    
-PERMISSIONED_UPLOADER_ADDRESS = None
-SWAP_VENUES = []
-
-# Choose network to deploy to based on cli args
-if NETWORK == "mainnet":
-    REST_URL = config["MAINNET_REST_URL"]
-    RPC_URL = config["MAINNET_RPC_URL"]
-    CHAIN_ID = config["MAINNET_CHAIN_ID"]
-    if "PERMISSIONED_UPLOADER_ADDRESS" in config:
-        PERMISSIONED_UPLOADER_ADDRESS = config["PERMISSIONED_UPLOADER_ADDRESS"]
-    if "swap_venues" in config:
-        SWAP_VENUES = config["swap_venues"]
-elif NETWORK == "testnet":
-    REST_URL = config["TESTNET_REST_URL"]
-    RPC_URL = config["TESTNET_RPC_URL"]
-    CHAIN_ID = config["TESTNET_CHAIN_ID"]
-    if "testnet_swap_venues" in config:
-        SWAP_VENUES = config["testnet_swap_venues"]
-else:
-    raise Exception(
-        "Must specify either 'mainnet' or 'testnet' for 2nd cli arg."
-    )
+IS_MAINNET = NETWORK == "mainnet"
+REST_URL = config["MAINNET_REST_URL"] if IS_MAINNET else config["TESTNET_REST_URL"]
+RPC_URL = config["MAINNET_RPC_URL"] if IS_MAINNET else config["TESTNET_RPC_URL"]
+CHAIN_ID = config["MAINNET_CHAIN_ID"] if IS_MAINNET else config["TESTNET_CHAIN_ID"]
+SWAP_VENUES = config.get("swap_venues", []) if IS_MAINNET else config.get("testnet_swap_venues", [])
+PERMISSIONED_UPLOADER_ADDRESS = config.get("PERMISSIONED_UPLOADER_ADDRESS") if IS_MAINNET else None
 
 ADDRESS_PREFIX = config["ADDRESS_PREFIX"]
 DENOM = config["DENOM"]
 GAS_PRICE = config["GAS_PRICE"]
 
+STORE_GAS_LIMIT = 15_000_000
+INSTANTIATE_GAS_LIMIT = 600_000
+
 # Contract Paths
 ENTRY_POINT_CONTRACT_PATH = config["ENTRY_POINT_CONTRACT_PATH"]
 IBC_TRANSFER_ADAPTER_PATH = config["IBC_TRANSFER_ADAPTER_PATH"]
-if CHAIN == "sei":
-    PLACEHOLDER_CONTRACT_PATH = config["PLACEHOLDER_CONTRACT_PATH"]
 
 # SALT
 SALT = config["SALT"].encode("utf-8")
@@ -94,16 +122,16 @@ SALT = config["SALT"].encode("utf-8")
 ENTRY_POINT_PRE_GENERATED_ADDRESS = config["ENTRY_POINT_PRE_GENERATED_ADDRESS"]
 
 MNEMONIC = config["MNEMONIC"]
-del config["MNEMONIC"]
 
-DEPLOYED_CONTRACTS_INFO = {}
+DEPLOYED_CONTRACTS_INFO: dict[str, dict[str, str]] = {}
+
 
 def main():
     # Create network config and client
     cfg = NetworkConfig(
         chain_id=CHAIN_ID,
         url=f"rest+{REST_URL}",
-        fee_minimum_gas_price=.01,
+        fee_minimum_gas_price=0.01,
         fee_denomination=DENOM,
         staking_denomination=DENOM,
     )
@@ -111,547 +139,237 @@ def main():
 
     # Create wallet from mnemonic
     wallet = create_wallet(client)
-    
+
     # Initialize deployed contracts info
     init_deployed_contracts_info()
-        
+
     # Get checksums for deployed contracts info
-    with open("../artifacts/checksums.txt", "r") as f:
-        checksums = f.read().split()
-        
+    checksums = Path("../artifacts/checksums.txt").read_text().split()
+
     # Store checksums for deployed contracts info
     for i in range(0, len(checksums), 2):
-        DEPLOYED_CONTRACTS_INFO["checksums"][checksums[i+1]] = checksums[i]
-        with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
-            toml.dump(DEPLOYED_CONTRACTS_INFO, f)
-            
-    # Check if chain doesn't support instantiate2
-    supports_instantiate2 = True
-    if "NO_INSTANTIATE2" in config:
-        supports_instantiate2 = False
-            
-    # IBC Contracts
-    if supports_instantiate2:
-        # Store and instantiate IBC transfer adapter contract
-        ibc_transfer_adapter_contract_code_id = store_contract(
-            client, 
-            wallet, 
-            IBC_TRANSFER_ADAPTER_PATH, 
-            "ibc_transfer_adapter", 
-            PERMISSIONED_UPLOADER_ADDRESS
-        )
-        ibc_transfer_adapter_contract_address = instantiate_contract(
-            client, 
-            wallet, 
-            None,
-            ibc_transfer_adapter_contract_code_id, 
-            {"entry_point_contract_address": ENTRY_POINT_PRE_GENERATED_ADDRESS}, 
-            "Skip Swap IBC Transfer Adapter", 
-            "ibc_transfer_adapter",
-            PERMISSIONED_UPLOADER_ADDRESS
-        )
-    else:
-        if CHAIN != "sei":
-            raise Exception(
-                "Sei is the only supported chain that doesn't support instantiate2."
-            )
-        # Store and instantiate placeholder contract
-        ibc_placeholder_contract_code_id = store_contract(
-            client, 
-            wallet, 
-            PLACEHOLDER_CONTRACT_PATH, 
-            "ibc_transfer_adapter", 
-            PERMISSIONED_UPLOADER_ADDRESS
-        )
-        ibc_transfer_adapter_contract_address = instantiate_contract(
-            client, 
-            wallet, 
-            str(wallet.address()),
-            ibc_placeholder_contract_code_id, 
-            {}, 
-            "Skip Swap IBC Transfer Adapter", 
-            "ibc_transfer_adapter",
-            PERMISSIONED_UPLOADER_ADDRESS
-        )
-    
-    entry_point_instantiate_args = {
-        "swap_venues": [],
-        "ibc_transfer_contract_address": ibc_transfer_adapter_contract_address,
-    }
-    
+        DEPLOYED_CONTRACTS_INFO["checksums"][checksums[i + 1]] = checksums[i]
+    save_deployed_contracts_info()
+
+    # Store and instantiate IBC transfer adapter contract
+    ibc_transfer_adapter_contract_code_id = store_contract(
+        client, wallet, IBC_TRANSFER_ADAPTER_PATH, "ibc_transfer_adapter"
+    )
+    ibc_transfer_adapter_contract_address = instantiate_contract(
+        client,
+        wallet,
+        ibc_transfer_adapter_contract_code_id,
+        {"entry_point_contract_address": ENTRY_POINT_PRE_GENERATED_ADDRESS},
+        "Skip Swap IBC Transfer Adapter",
+        "ibc_transfer_adapter",
+    )
+
+    swap_venues: list[dict[str, str]] = []
+
     # Swap Contracts
     for venue in SWAP_VENUES:
-        if supports_instantiate2:
-            swap_adapter_contract_code_id = store_contract(
-                client, 
-                wallet, 
-                venue["swap_adapter_path"], 
-                f"swap_adapter_{venue['name']}", 
-                PERMISSIONED_UPLOADER_ADDRESS
-            )
-            swap_adapter_instantiate_args = {
-                "entry_point_contract_address": ENTRY_POINT_PRE_GENERATED_ADDRESS
+        swap_adapter_contract_code_id = store_contract(
+            client, wallet, venue["swap_adapter_path"], f"swap_adapter_{venue['name']}"
+        )
+        swap_adapter_contract_address = instantiate_contract(
+            client,
+            wallet,
+            swap_adapter_contract_code_id,
+            {"entry_point_contract_address": ENTRY_POINT_PRE_GENERATED_ADDRESS},
+            f"Skip Swap Swap Adapter {venue['name']}",
+            f"swap_adapter_{venue['name']}",
+        )
+        swap_venues.append(
+            {
+                "name": venue["name"],
+                "adapter_contract_address": swap_adapter_contract_address,
             }
-            if "lido_satellite_contract_address" in venue:
-                swap_adapter_instantiate_args["lido_satellite_contract_address"] = venue["lido_satellite_contract_address"]
-            if "hallswap_contract_address" in venue:
-                swap_adapter_instantiate_args["hallswap_contract_address"] = venue["hallswap_contract_address"]
-            if "dexter_vault_contract_address" in venue:
-                swap_adapter_instantiate_args["dexter_vault_contract_address"] = venue["dexter_vault_contract_address"]
-            if "dexter_router_contract_address" in venue:
-                swap_adapter_instantiate_args["dexter_router_contract_address"] = venue["dexter_router_contract_address"]
-            if "drop_factory_contract_address" in venue:
-                swap_adapter_instantiate_args["drop_factory_contract_address"] = venue["drop_factory_contract_address"]
-            if "dex_module_address" in venue:
-                swap_adapter_instantiate_args["dex_module_address"] = venue["dex_module_address"]
-            if "astrovault_router_contract_address" in venue:
-                swap_adapter_instantiate_args["astrovault_router_contract_address"] = venue["astrovault_router_contract_address"]
-            if "mantra_pool_manager_address" in venue:
-                swap_adapter_instantiate_args["mantra_pool_manager_address"] = venue["mantra_pool_manager_address"]
-            
-            swap_adapter_contract_address = instantiate_contract(
-                client, 
-                wallet, 
-                None,
-                swap_adapter_contract_code_id, 
-                swap_adapter_instantiate_args, 
-                f"Skip Swap Swap Adapter {venue['name']}", 
-                f"swap_adapter_{venue['name']}",
-                PERMISSIONED_UPLOADER_ADDRESS
-            )
-            
-            entry_point_instantiate_args["swap_venues"].append(
-                {
-                    "name": venue["name"],
-                    "adapter_contract_address": swap_adapter_contract_address,
-                }
-            )
-        else:
-            # Store and instantiate placeholder contract
-            swap_placeholder_contract_code_id = store_contract(
-                client, 
-                wallet, 
-                PLACEHOLDER_CONTRACT_PATH, 
-                f"swap_adapter_{venue['name']}", 
-                PERMISSIONED_UPLOADER_ADDRESS
-            )
-            swap_adapter_contract_address = instantiate_contract(
-                client, 
-                wallet, 
-                str(wallet.address()),
-                swap_placeholder_contract_code_id, 
-                {}, 
-                f"Skip Swap Swap Adapter {venue['name']}", 
-                f"swap_adapter_{venue['name']}",
-                PERMISSIONED_UPLOADER_ADDRESS
-            )
-            # Add swap adapter contract address to entry point instantiate args
-            entry_point_instantiate_args["swap_venues"].append(
-                {
-                    "name": venue["name"],
-                    "adapter_contract_address": swap_adapter_contract_address,
-                }
-            )
-    
+        )
+
     # Entry Point Contract
     entry_point_contract_code_id = store_contract(
-        client, 
-        wallet, 
-        ENTRY_POINT_CONTRACT_PATH, 
-        "entry_point", 
-        PERMISSIONED_UPLOADER_ADDRESS
+        client, wallet, ENTRY_POINT_CONTRACT_PATH, "entry_point"
     )
-    
-    if supports_instantiate2:
-        instantiate2_contract(
-            client=client, 
-            wallet=wallet, 
-            code_id=entry_point_contract_code_id, 
-            args=entry_point_instantiate_args,
-            label="Skip Swap Entry Point",
-            name="entry_point",
-            pre_gen_address=ENTRY_POINT_PRE_GENERATED_ADDRESS,
-            permissioned_uploader_address=PERMISSIONED_UPLOADER_ADDRESS
-        )
-    else:
-        entry_point_contract_address = instantiate_contract(
-            client, 
-            wallet, 
-            None,
-            entry_point_contract_code_id, 
-            entry_point_instantiate_args, 
-            "Skip Swap Entry Point", 
-            "entry_point",
-            PERMISSIONED_UPLOADER_ADDRESS
-        )
-        
-        # Store IBC transfer adapter contract
-        ibc_transfer_adapter_contract_code_id = store_contract(
-            client, 
-            wallet, 
-            IBC_TRANSFER_ADAPTER_PATH, 
-            "ibc_transfer_adapter", 
-            PERMISSIONED_UPLOADER_ADDRESS
-        )
-        
-        # Migrate IBC transfer adapter contract
-        ibc_transfer_adapter_contract_address = migrate_contract(
-            client, 
-            wallet,
-            entry_point_instantiate_args["ibc_transfer_contract_address"],
-            ibc_transfer_adapter_contract_code_id, 
-            {"entry_point_contract_address": entry_point_contract_address}, 
-            "ibc_transfer_adapter"
-        )
-        
-        # Clear Admin for IBC transfer adapter contract
-        clear_admin(
-            client, 
-            wallet, 
-            ibc_transfer_adapter_contract_address, 
-            "ibc_transfer_adapter"
-        )
-        
-        # Store, migrate, and clear admin for swap adapter contracts
-        for i, venue in enumerate(SWAP_VENUES):
-            swap_adapter_contract_code_id = store_contract(
-                client, 
-                wallet, 
-                venue["swap_adapter_path"], 
-                f"swap_adapter_{venue['name']}", 
-                PERMISSIONED_UPLOADER_ADDRESS
-            )
-            args = {"entry_point_contract_address": entry_point_contract_address}
-            if "hallswap_contract_address" in venue:
-                args["hallswap_contract_address"] = venue["hallswap_contract_address"]
-                
-            swap_adapter_contract_address = migrate_contract(
-                client, 
-                wallet, 
-                entry_point_instantiate_args["swap_venues"][i]["adapter_contract_address"],
-                swap_adapter_contract_code_id, 
-                args, 
-                f"swap_adapter_{venue['name']}"
-            )
-            clear_admin(
-                client, 
-                wallet, 
-                swap_adapter_contract_address, 
-                f"swap_adapter_{venue['name']}"
-            )
-    
-    
+    _ = instantiate2_contract(
+        client=client,
+        wallet=wallet,
+        code_id=entry_point_contract_code_id,
+        args={
+            "swap_venues": swap_venues,
+            "ibc_transfer_contract_address": ibc_transfer_adapter_contract_address,
+        },
+        label="Skip Swap Entry Point",
+        name="entry_point",
+    )
+
+
 def create_tx(
-    msg,
-    client, 
-    wallet, 
-    gas_limit: int, 
-    fee: str,
-) -> tuple[bytes, str]:        
+    msg: Message,
+    client: LedgerClient,
+    wallet: LocalWallet,
+    gas_limit: int,
+) -> Transaction:
     time.sleep(5)
     tx = Transaction()
-    tx.add_message(msg)
-    
+    _ = tx.add_message(msg)
+
     # Get account
-    account = client.query_account(str(wallet.address()))
-    
+    account = client.query_account(wallet.address())
+
     # Seal, Sign, and Complete Tx
-    tx.seal(
-        signing_cfgs=[SigningCfg.direct(wallet.public_key(), account.sequence)], 
-        fee=fee, 
-        gas_limit=gas_limit
+    _ = tx.seal(
+        signing_cfgs=[SigningCfg.direct(wallet.public_key(), account.sequence)],
+        fee=TxFee(amount=f"{int(GAS_PRICE * gas_limit)}{DENOM}", gas_limit=gas_limit),
     )
-    tx.sign(wallet.signer(), client.network_config.chain_id, account.number)
-    tx.complete()
-    
+    _ = tx.sign(wallet.signer(), client.network_config.chain_id, account.number)
+    _ = tx.complete()
+
     return tx
 
-    
-def create_wallet(client) -> LocalWallet:
-    """ Create a wallet from a mnemonic and return it"""
-    if CHAIN == "terra":
-        from terra_sdk.client.lcd import LCDClient
-        from terra_sdk.key.mnemonic import MnemonicKey
-        mk = MnemonicKey(mnemonic=MNEMONIC)
-        terra = LCDClient(REST_URL, CHAIN_ID)
-        terra_wallet = terra.wallet(mk)
-        wallet = LocalWallet(PrivateKey(terra_wallet.key.private_key), prefix="terra")
-        balance = client.query_bank_balance(str(wallet.address()), DENOM)
-        print("Wallet Address: ", wallet.address(), " with account balance: ", balance)
-    else:
-        seed_bytes = Bip39SeedGenerator(MNEMONIC).Generate()
-        bip44_def_ctx = Bip44.FromSeed(seed_bytes, Bip44Coins.COSMOS).DeriveDefaultPath()
-        wallet = LocalWallet(
-            PrivateKey(bip44_def_ctx.PrivateKey().Raw().ToBytes()), 
-            prefix=ADDRESS_PREFIX
-        )  
-        balance = client.query_bank_balance(str(wallet.address()), DENOM)
-        print("Wallet Address: ", wallet.address(), " with account balance: ", balance)
+
+def create_wallet(client: LedgerClient) -> LocalWallet:
+    """Create a wallet from a mnemonic and return it"""
+    wallet = LocalWallet.from_mnemonic(MNEMONIC, prefix=ADDRESS_PREFIX)
+    balance = client.query_bank_balance(wallet.address(), DENOM)
+    print("Wallet Address: ", wallet.address(), " with account balance: ", balance)
     return wallet
 
 
 def init_deployed_contracts_info():
-    DEPLOYED_CONTRACTS_INFO["info"] = {}
-    DEPLOYED_CONTRACTS_INFO["info"]["chain_id"] = CHAIN_ID
-    DEPLOYED_CONTRACTS_INFO["info"]["network"] = NETWORK
-    DEPLOYED_CONTRACTS_INFO["info"]["deploy_date"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    DEPLOYED_CONTRACTS_INFO["info"]["commit_hash"] = config["COMMIT_HASH"]
-    DEPLOYED_CONTRACTS_INFO["info"]["salt"] = config["SALT"]
+    DEPLOYED_CONTRACTS_INFO["info"] = {
+        "chain_id": CHAIN_ID,
+        "network": NETWORK,
+        "deploy_date": datetime.now(UTC).strftime("%d/%m/%Y %H:%M:%S"),
+        "commit_hash": config["COMMIT_HASH"],
+        "salt": config["SALT"],
+    }
     DEPLOYED_CONTRACTS_INFO["checksums"] = {}
     DEPLOYED_CONTRACTS_INFO["code-ids"] = {}
     DEPLOYED_CONTRACTS_INFO["contract-addresses"] = {}
     DEPLOYED_CONTRACTS_INFO["tx-hashes"] = {}
-    with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
-        toml.dump(DEPLOYED_CONTRACTS_INFO, f)
+    save_deployed_contracts_info()
 
 
-def store_contract(
-    client, 
-    wallet, 
-    file_path, 
-    name, 
-    permissioned_uploader_address
-) -> int:
-    if CHAIN == "osmosis":
-        gas_limit = 15000000
-    else:
-        gas_limit = 7000000
-        
-    if permissioned_uploader_address is not None:
-        msg = MsgStoreCode(
-            sender=permissioned_uploader_address,
-            wasm_byte_code=open(file_path, "rb").read(),
-            instantiate_permission=None
+def save_deployed_contracts_info():
+    with DEPLOYED_CONTRACTS_PATH.open("w") as f:
+        tomlkit.dump(DEPLOYED_CONTRACTS_INFO, f)
+
+
+def store_contract(client: LedgerClient, wallet: LocalWallet, file_path: str, name: str) -> int:
+    wasm_byte_code = Path(file_path).read_bytes()
+    msg: Message
+    if PERMISSIONED_UPLOADER_ADDRESS is not None:
+        msg = create_exec_msg(
+            msg=MsgStoreCode(sender=PERMISSIONED_UPLOADER_ADDRESS, wasm_byte_code=wasm_byte_code),
+            grantee_address=str(wallet.address()),
         )
-        msg = create_exec_msg(msg=msg, grantee_address=str(wallet.address()))
     else:
-        msg = MsgStoreCode(
-            sender=str(wallet.address()),
-            wasm_byte_code=open(file_path, "rb").read(),
-            instantiate_permission=None
-        )
-    store_tx = create_tx(
-        msg=msg, 
-        client=client, 
-        wallet=wallet, 
-        gas_limit=gas_limit,
-        fee=f"{int(GAS_PRICE*gas_limit)}{DENOM}"
-    )
+        msg = MsgStoreCode(sender=str(wallet.address()), wasm_byte_code=wasm_byte_code)
+    store_tx = create_tx(msg=msg, client=client, wallet=wallet, gas_limit=STORE_GAS_LIMIT)
     tx_hash = sha256(store_tx.tx.SerializeToString()).hexdigest()
     print("Tx hash: ", tx_hash)
-    resp: httpx.Response = broadcast_tx(store_tx)
-    contract_code_id: str = get_attribute_value(resp, "store_code", "code_id")
+    resp = broadcast_tx(store_tx)
+    contract_code_id = get_attribute_value(resp, "store_code", "code_id")
     print(f"Skip Swap {name} Contract Code ID:", contract_code_id)
     DEPLOYED_CONTRACTS_INFO["code-ids"][f"{name}_contract_code_id"] = contract_code_id
     DEPLOYED_CONTRACTS_INFO["tx-hashes"][f"store_{name}_tx_hash"] = tx_hash
-    with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
-        toml.dump(DEPLOYED_CONTRACTS_INFO, f)
+    save_deployed_contracts_info()
     return int(contract_code_id)
 
 
 def instantiate_contract(
-    client, 
-    wallet, 
-    admin, 
-    code_id, 
-    args, 
-    label, 
-    name,
-    permissioned_uploader_address
+    client: LedgerClient,
+    wallet: LocalWallet,
+    code_id: int,
+    args: dict[str, str],
+    label: str,
+    name: str,
 ) -> str:
-    if CHAIN == "osmosis" or CHAIN == "neutron":
-        gas_limit = 600000
-    else:
-        gas_limit = 300000
-        
-    non_permissioned_chains = ["osmosis", "cosmoshub", "babylon"]
-    if permissioned_uploader_address is not None and CHAIN not in non_permissioned_chains:
-        msg = MsgInstantiateContract(
-            sender=permissioned_uploader_address,
-            admin=admin,
-            code_id=code_id,
-            msg=json_encode(args).encode("UTF8"),
-            label=label,
-        )
-        msg = create_exec_msg(msg=msg, grantee_address=str(wallet.address()))
-    else:
-        msg = MsgInstantiateContract(
-            sender=str(wallet.address()),
-            admin=admin,
-            code_id=code_id,
-            msg=json_encode(args).encode("UTF8"),
-            label=label,
-        )
-        
+    msg = MsgInstantiateContract(
+        sender=str(wallet.address()),
+        code_id=code_id,
+        msg=json.dumps(args).encode("UTF8"),
+        label=label,
+    )
     instantiate_tx = create_tx(
-        msg=msg, 
-        client=client, 
-        wallet=wallet, 
-        gas_limit=gas_limit,
-        fee=f"{int(GAS_PRICE*gas_limit)}{DENOM}"
+        msg=msg, client=client, wallet=wallet, gas_limit=INSTANTIATE_GAS_LIMIT
     )
     tx_hash = sha256(instantiate_tx.tx.SerializeToString()).hexdigest()
     print("Tx hash: ", tx_hash)
-    resp: httpx.Response = broadcast_tx(instantiate_tx)
-    contract_address: str = get_attribute_value(resp, "instantiate", "_contract_address")
+    resp = broadcast_tx(instantiate_tx)
+    contract_address = get_attribute_value(resp, "instantiate", "_contract_address")
     print(f"Skip Swap {name} Contract Address:", contract_address)
     DEPLOYED_CONTRACTS_INFO["contract-addresses"][f"{name}_contract_address"] = contract_address
     DEPLOYED_CONTRACTS_INFO["tx-hashes"][f"instantiate_{name}_tx_hash"] = tx_hash
-    with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
-        toml.dump(DEPLOYED_CONTRACTS_INFO, f)
+    save_deployed_contracts_info()
     return contract_address
-
-def migrate_contract(client, wallet, contract_address, code_id, args, name) -> str:
-    if CHAIN == "osmosis":
-        gas_limit = 600000
-    else:
-        gas_limit = 300000
-    msg = MsgMigrateContract(
-        sender=str(wallet.address()),
-        contract=contract_address,
-        code_id=code_id,
-        msg=json_encode(args).encode("UTF8"),
-    )
-    migrate_tx = create_tx(
-        msg=msg, 
-        client=client, 
-        wallet=wallet, 
-        gas_limit=gas_limit,
-        fee=f"{int(GAS_PRICE*gas_limit)}{DENOM}"
-    )
-    tx_hash = sha256(migrate_tx.tx.SerializeToString()).hexdigest()
-    print("Tx hash: ", tx_hash)
-    broadcast_tx(migrate_tx)
-    DEPLOYED_CONTRACTS_INFO["tx-hashes"][f"migrate_{name}_tx_hash"] = tx_hash
-    with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
-        toml.dump(DEPLOYED_CONTRACTS_INFO, f)
-    return contract_address
-
-def clear_admin(client, wallet, contract_address, name):
-    if CHAIN == "osmosis":
-        gas_limit = 600000
-    else:
-        gas_limit = 300000
-    msg = MsgClearAdmin(
-        sender=str(wallet.address()),
-        contract=contract_address,
-    )
-    clear_admin_tx = create_tx(
-        msg=msg, 
-        client=client, 
-        wallet=wallet, 
-        gas_limit=gas_limit,
-        fee=f"{int(GAS_PRICE*gas_limit)}{DENOM}"
-    )
-    tx_hash = sha256(clear_admin_tx.tx.SerializeToString()).hexdigest()
-    print("Tx hash: ", tx_hash)
-    broadcast_tx(clear_admin_tx)
-    DEPLOYED_CONTRACTS_INFO["tx-hashes"][f"clear_admin_{name}_tx_hash"] = tx_hash
-    with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
-        toml.dump(DEPLOYED_CONTRACTS_INFO, f)
-    return None
 
 
 def instantiate2_contract(
-    client, 
-    wallet, 
-    code_id, 
-    args, 
-    label, 
-    name, 
-    pre_gen_address,
-    permissioned_uploader_address
+    client: LedgerClient,
+    wallet: LocalWallet,
+    code_id: int,
+    args: dict[str, str | list[dict[str, str]]],
+    label: str,
+    name: str,
 ) -> str:
-    if CHAIN == "osmosis" or CHAIN == "neutron":
-        gas_limit = 600000
-    else:
-        gas_limit = 300000
-
-    non_permissioned_chains = ["osmosis", "cosmoshub", "babylon"]
-    if permissioned_uploader_address is not None and CHAIN not in non_permissioned_chains:
-        msg = MsgInstantiateContract2(
-            sender=permissioned_uploader_address,
-            code_id=code_id,
-            msg=json_encode(args).encode("UTF8"),
-            label=label,
-            salt=SALT,
-            fix_msg=False,
-        )
-        msg = create_exec_msg(msg=msg, grantee_address=str(wallet.address()))
-    else:
-        msg = MsgInstantiateContract2(
-            sender=str(wallet.address()),
-            code_id=code_id,
-            msg=json_encode(args).encode("UTF8"),
-            label=label,
-            salt=SALT,
-            fix_msg=False,
-        )
-
+    msg = MsgInstantiateContract2(
+        sender=str(wallet.address()),
+        code_id=code_id,
+        msg=json.dumps(args).encode("UTF8"),
+        label=label,
+        salt=SALT,
+        fix_msg=False,
+    )
     instantiate_2_tx = create_tx(
-        msg=msg, 
-        client=client, 
-        wallet=wallet, 
-        gas_limit=gas_limit,
-        fee=f"{int(GAS_PRICE*gas_limit)}{DENOM}"
+        msg=msg, client=client, wallet=wallet, gas_limit=INSTANTIATE_GAS_LIMIT
     )
     tx_hash = sha256(instantiate_2_tx.tx.SerializeToString()).hexdigest()
     print("Tx hash: ", tx_hash)
-    resp: httpx.Response = broadcast_tx(instantiate_2_tx)
-    contract_address: str = get_attribute_value(resp, "instantiate", "_contract_address")
+    resp = broadcast_tx(instantiate_2_tx)
+    contract_address = get_attribute_value(resp, "instantiate", "_contract_address")
     print(f"Skip Swap {name} Contract Address:", contract_address)
     DEPLOYED_CONTRACTS_INFO["contract-addresses"][f"{name}_contract_address"] = contract_address
     DEPLOYED_CONTRACTS_INFO["tx-hashes"][f"instantiate_{name}_tx_hash"] = tx_hash
-    with open(f"{DEPLOYED_CONTRACTS_FOLDER_PATH}/{CHAIN}/{NETWORK}.toml", "w") as f:
-        toml.dump(DEPLOYED_CONTRACTS_INFO, f)
+    save_deployed_contracts_info()
     return contract_address
 
 
-def create_any_msg(msg):
-    any_msg = any_pb2.Any()
-    any_msg.Pack(msg, "")
+def create_any_msg(msg: Message) -> ProtoAny:
+    any_msg = ProtoAny()
+    _ = any_msg.Pack(msg, "")
     return any_msg
 
 
-def create_exec_msg(msg, grantee_address: str) -> MsgExec:
-    authz_exec_any = create_any_msg(msg)
-    msg_exec = MsgExec(grantee=grantee_address, msgs = [authz_exec_any])
-    return msg_exec
+def create_exec_msg(msg: Message, grantee_address: str) -> MsgExec:
+    return MsgExec(grantee=grantee_address, msgs=[create_any_msg(msg)])
 
 
-def broadcast_tx(tx) -> httpx.Response:
+def broadcast_tx(tx: Transaction) -> httpx.Response:
     tx_bytes = tx.tx.SerializeToString()
     encoded_tx = b64encode(tx_bytes).decode("utf-8")
-    data = {
-        'jsonrpc': '2.0',
-        'method': "broadcast_tx_sync",
-        'params': [encoded_tx],
-        'id': 1
-    }
-    postResp = httpx.post(RPC_URL, json=data, timeout=60)
-    print("postResp.json(): ", postResp.json())
+    data = {"jsonrpc": "2.0", "method": "broadcast_tx_sync", "params": [encoded_tx], "id": 1}
+    post_resp = httpx.post(RPC_URL, json=data, timeout=60)
+    print("broadcast response: ", post_resp.text)
     print("Sleeping for 20 seconds...")
     time.sleep(20)
-    resp = httpx.get(
-        REST_URL + f"/cosmos/tx/v1beta1/txs/{sha256(tx_bytes).hexdigest()}", 
-        timeout=60
+    return httpx.get(
+        REST_URL + f"/cosmos/tx/v1beta1/txs/{sha256(tx_bytes).hexdigest()}", timeout=60
     )
-    return resp
 
 
-def get_attribute_value(resp, event_type, attr_key):
-    if resp.json()['tx_response']['logs'] != []:
-        events = resp.json()['tx_response']['logs'][0]['events']
-    else:
-        events = resp.json()['tx_response']['events']
-        
+def get_attribute_value(resp: httpx.Response, event_type: str, attr_key: str) -> str:
+    tx_response = cast(GetTxResponse, resp.json())["tx_response"]
+    logs = tx_response.get("logs", [])
+    events = logs[0]["events"] if logs else tx_response["events"]
+
     for event in events:
-        if event['type'] == event_type:
-            for attr in event['attributes']:
-                if attr['key'] == attr_key:
-                    return attr['value']
-    return None
-    
-    
+        if event["type"] == event_type:
+            for attr in event["attributes"]:
+                if attr["key"] == attr_key:
+                    return attr["value"]
+    raise DeployError(f"Attribute {attr_key!r} of event {event_type!r} not found in tx response")
+
+
 if __name__ == "__main__":
     main()
